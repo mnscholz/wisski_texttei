@@ -1,0 +1,19 @@
+
+.tei_text  {
+  line-height: 1.3em;
+}
+
+.tei_footnote  {
+  margin-top: 20px;
+  padding-top: 10px;
+  /*  border-top: 1px solid #808080;*/
+  background-image: url(sep.png);
+  background-repeat: no-repeat;
+}
+
+.tei_footnote  ~ .tei_footnote {
+  margin-top: 0px;
+  padding-top: 5px;
+  border: none;
+  background-image: none;
+}

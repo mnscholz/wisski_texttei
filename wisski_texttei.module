@@ -1,0 +1,302 @@
+<?php
+// $Id$
+
+/* @author Martin Scholz */
+// *** TEI support *** //
+
+function wisski_texttei_init() {
+  drupal_add_css(drupal_get_path('module', 'wisski_texttei') . '/wisski_texttei.css');
+}
+
+
+function wisski_texttei_filter($op, $delta = 0, $format = -1, $text = '', $cache_id = 0) {
+  
+  if ($op == 'list') {
+    return array(0 => 'TEI to WissKI annotated HTML');
+
+  } elseif ($op == 'process') {
+    return wisski_texttei_convert_tei_to_html($text, TRUE, TRUE, FALSE);
+  }
+
+  return $text;
+
+}
+
+
+function wisski_texttei_convert_tei_to_html($text, $include_instance_group = FALSE, $include_rdfa = FALSE, $annos_as_links = FALSE) {
+  
+  if (!$text || trim($text) == '') return '';
+
+  $doc = new DOMDocument();
+  if (!@$doc->loadXML($text)) {
+    $text_ents = mb_convert_encoding($text, 'HTML-ENTITIES', "UTF-8");
+    if (!@$doc->loadHTML($text_ents)) {
+      $doc = NULL;
+    }
+  }
+  
+  if ($doc === NULL) {
+    watchdog('WissKI Text', 'TEI filter could not be applied. Text is no XML/HTML.');
+    return $text;
+  }
+  
+  $old_top = $doc->removeChild($doc->documentElement);
+  $top_p = $doc->createElement('div');
+  $top_p->setAttribute("class", "tei_text");
+  $top_p->appendChild($old_top);
+  $doc->appendChild($top_p);
+  
+  // track which nodes are new, so that we don't convert nodes twice.
+  $new_nodes = array();
+  
+  // convert links
+  // changeing the DOM is forbidden while iterating over a noedlist
+  // so we first collect all tags in an array
+  $nodes_nl = $doc->getElementsByTagName('link');
+  $node_array = array();
+  foreach ($nodes_nl as $l) $node_array[] = $l;
+  foreach ($node_array as $link) {
+    
+    if (!$link->hasAttribute('target')) {
+      
+      _wisski_texttei_replace_node($link);
+      
+    } else {
+
+      $new = $doc->createElement('span');
+      
+      $uri = $link->getAttribute('target');
+      
+      if ($include_rdfa) {
+        $new->setAttribute('about', $uri);
+      }
+      
+      $class = 'wisski_anno wisski_anno_user wisski_anno_uri_' . rawurlencode($uri) . ' ';
+      
+      // determine PB group of the refered instance
+      if ($include_instance_group) {
+        
+        module_load_include('wisski_pathbuilder', 'inc');
+        $group = wisski_pathbuilder_getInternaGroupsForConcept($uri, TRUE);
+        if (!empty($group)) {
+          $class .= 'wisski_anno_class_' . $group[0] . ' ';
+        }
+        
+      }
+      
+      // disregard vocabs
+      
+      // add the css class attribs
+      $new->setAttribute('class', $class);
+      
+      if ($annos_as_links) {
+        $a = $doc->createElement(a);
+        $a->setAttribute("href", $uri);
+        $a->appendChild($new);
+        $new = $a;
+      }
+      
+      _wisski_texttei_replace_node($link, $new);
+      
+    }
+    
+  }
+  
+  // replace linebreaks
+  $nodes_nl = $doc->getElementsByTagName('lb');
+  $node_array = array();
+  foreach ($nodes_nl as $l) $node_array[] = $l;
+  foreach ($node_array as $lb) {
+    $br = $doc->createElement('br');
+    _wisski_texttei_replace_node($lb, $br);
+  }
+  
+  // replace <em>'s
+  // <em>'s will remain the same
+  
+  // replace footnotes
+  // consider different types of notes (foot, end, here...)
+  $nodes_nl = $doc->getElementsByTagName('note');
+  $node_array = array();
+  foreach ($nodes_nl as $l) $node_array[] = $l;
+  $count = 0;
+  foreach ($node_array as $f) {
+    $note = $doc->createElement('div', '[' . ++$count . '] ');
+    $note->setAttribute("class", $note->getAttribute("class") . " tei_footnote");
+    while ($f->firstChild) {
+      $c = $f->removeChild($f->firstChild);
+      $note->appendChild($c);
+    }
+    $sup = $doc->createElement('sup', '[' . $count . ']');
+    
+    _wisski_texttei_replace_node($f, $sup);
+    
+    $doc->documentElement->appendChild($note);
+  }
+  
+  $text = $doc->saveXML();
+  
+  // workaround: delete xml declaration. there should be an option to not serialize it...
+  if (($a = mb_strpos($text, '<?xml')) !== FALSE) {
+    $text = mb_substr($text, mb_strpos($text, '?' . '>', $a) + 2);
+  }
+  
+  return $text;
+
+}
+
+
+
+function wisski_texttei_convert_html_to_tei($text) {
+  
+  if (!$text || trim($text) == '') return '';
+  
+  $doc = new DOMDocument();
+  if (!@$doc->loadXML($text)) {
+    $text_ents = mb_convert_encoding($text, 'HTML-ENTITIES', "UTF-8");
+    if (!@$doc->loadHTML($text_ents)) {
+      $doc = NULL;
+    }
+  }
+  
+  if ($doc === NULL) {
+    watchdog('WissKI Text', 'HTML to TEI filter could not be applied. Text is no XML/HTML.');
+    return $text;
+  }
+  
+  $old_top = $doc->removeChild($doc->documentElement);
+  $top_p = $doc->createElement('div');
+  $top_p->setAttribute("class", "tei_text");
+  $top_p->appendChild($old_top);
+  $doc->appendChild($top_p);
+  
+  
+  // convert links
+  // changeing the DOM is forbidden while iterating over a nodelist
+  // so we first collect all tags in an array
+  $nodes_nl = $doc->getElementsByTagName('span');
+  $node_array = array();
+  foreach ($nodes_nl as $l) {
+    $node_array[] = $l;
+  }
+  foreach ($node_array as $link) {
+  
+    $uri = NULL;
+    
+    if ($link->hasAttribute('about')) {
+      $uri = $link->getAttribute('about'); // rdfa: the easy case
+    } else {
+      // no rdfa, look if there is an annotation css class
+      $classes = preg_split('/\s+/', $link->getAttribute('class'), PREG_SPLIT_NO_EMPTY);
+      $uri = NULL;
+      foreach ($classes as $c) {
+        if (mb_strpos($c, 'wisski_anno_uri_') !== FALSE) {
+          $uri = mb_substr($c, 16);
+          break;
+        }
+      }
+      if ($uri === NULL) {
+        continue;  // no class means this is span for another purpose. we can keep it as it doesnt derange
+      }
+      
+    }
+    
+    
+    $new = $doc->createElement('link');
+    $new->setAttribute('target', $uri);
+    
+    _wisski_texttei_replace_node($link, $new);
+    
+  }
+  
+  
+  // replace linebreaks
+  $nodes_nl = $doc->getElementsByTagName('br');
+  $node_array = array();
+  foreach ($nodes_nl as $l) $node_array[] = $l;
+  foreach ($node_array as $lb) {
+    $br = $doc->createElement('lb');
+    _wisski_texttei_replace_node($lb, $br);
+  }
+  
+  // replace <em>'s
+  // <em>'s will remain the same
+  
+  // replace footnotes
+  // TODO?: consider different types of notes (foot, end, here...)
+  $nodes_nl = $doc->getElementsByTagName('sup');
+  $node_array_sup = array();
+  foreach ($nodes_nl as $l) {
+    // $id[1]: the footnote number
+    if (!preg_match('/^\s*[\s*(\d+)\s*]\s*$/u', $f->textContent, $id))
+      $node_array_sup[$id[1]] = $l;
+  }
+  $nodes_nl = $doc->getElementsByTagName('div');
+  $node_array_div = array();
+  foreach ($nodes_nl as $l) {
+    if ($l->hasAttribute('class')
+        && strpos($l->hasAttribute('class'), 'tei_tag_footnote') !== FALSE
+    // $id[1]: the footnote number
+       && preg_match('/^\s*[\s*(\d+)\s*]/u', $l->textContent, $id))
+      $node_array_div[$id[1]] = $l;
+  }
+  foreach ($node_array_sup as $id => $sup) {
+    
+    if (! isset($node_array_div[$id])) {
+      drupal_set_message(t("@id seems to be a footnote mark but there is no footnote text.", array('@id' => "[$id]")), 'warning');
+      continue;
+    }
+    $div = $node_array_div[$id];
+    unset($node_array_div[$id]);
+    
+    $note = $doc->createElement('note');
+    $note->setAttribute('place', 'foot');
+    
+    _wisski_texttei_replace_node($div, $note);
+    _wisski_texttei_replace_node($sup, $note);
+  
+  }
+  
+  // complain about that we found too many divs
+  foreach ($node_array_div as $id => $v) {
+    drupal_set_message(t("@id seems to be a footnote text but there is no footnote mark.", array('@id' => mb_substr($v->textContent, 15))), 'warning');
+  }
+  
+  $text = $doc->saveXML();
+  
+  // workaround: delete xml declaration. there should be an option to not serialize it...
+  if (($a = mb_strpos($text, '<?xml')) !== FALSE) {
+    $text = mb_substr($text, mb_strpos($text, '?' . '>', $a) + 2);
+  }
+  
+  return $text;
+  
+}
+
+
+
+function _wisski_texttei_replace_node($old, $new = NULL) {
+  
+  if ($new === NULL) {
+    
+    while ($old->firstChild !== NULL) {
+      $old->parentNode->insertBefore($old->firstChild, $old);
+    }
+    
+    $old->parentNode->removeChild($old);
+    
+  } else {
+    
+    while ($old->firstChild !== NULL) {
+      $new->appendChild($old->firstChild);
+    }
+    
+    $old->parentNode->replaceChild($new, $old);
+    
+  }
+  
+}
+
+
+
+

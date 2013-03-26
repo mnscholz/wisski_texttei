@@ -1,0 +1,7 @@
+; $Id$
+name = WissKI TEI Support
+description = Adds basic support for TEI.
+core = 6.x
+version = "0.0-dev"
+package = "WissKI Text"
+dependencies[] = wisski_pathbuilder
