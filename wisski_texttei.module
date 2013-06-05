@@ -22,7 +22,12 @@ function wisski_texttei_filter($op, $delta = 0, $format = -1, $text = '', $cache
     return array(0 => 'TEI to WissKI annotated HTML');
 
   } elseif ($op == 'process') {
-    return wisski_texttei_convert_tei_to_html($text, TRUE, TRUE, FALSE);
+    list($ok, $html) = wisski_texttei_convert_tei_to_html($text, TRUE, TRUE, FALSE);
+    if ($ok) {
+      $text = $html;
+    } else {
+      drupal_set_message($html, 'error');
+    }
   }
 
   return $text;
@@ -270,6 +275,7 @@ function wisski_texttei_convert_html_to_tei($text) {
 
         if (mb_strpos($c, 'wisski_anno_uri_') !== FALSE) {
           $uri = mb_substr($c, 16);
+          $uri = rawurldecode($uri);
           break;
         }
       }
