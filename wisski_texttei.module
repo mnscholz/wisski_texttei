@@ -6,6 +6,13 @@
 
 function wisski_texttei_init() {
   drupal_add_css(drupal_get_path('module', 'wisski_texttei') . '/wisski_texttei.css');
+
+  $rows = db_query("SELECT format FROM {filters} WHERE module = 'wisski_texttei' AND delta = 0");
+  $formats = array();
+  while ($f = db_fetch_array($rows)) $formats[$f['format']] = $f['format'];
+  
+  drupal_add_js(array('wisski' => array('texttei' => array('formats' => $formats))), 'setting');
+
 }
 
 
@@ -23,9 +30,84 @@ function wisski_texttei_filter($op, $delta = 0, $format = -1, $text = '', $cache
 }
 
 
-function wisski_texttei_convert_tei_to_html($text, $include_instance_group = FALSE, $include_rdfa = FALSE, $annos_as_links = FALSE) {
+function wisski_texttei_menu() {
+
+  $items['wisski/texttei/convert'] = array(
+    'title' => 'Convert',
+    'type' => MENU_CALLBACK,
+    'page callback' => 'wisski_texttei_ajax_convert',
+    'page arguments' => array(),
+    'access arguments' => array('wisski access templateEdit '),
+  );
+  return $items;
+
+}
+
+
+
+function wisski_texttei_wysiwyg_plugin($editor, $version) {
+  if ($editor != 'tinymce') return;
+
+  global $base_root, $base_path;
+
+  $plugins = array(
+    // sends the text to server and retrieves automatically generated annotations 
+    'wisskiTextTEI' => array(
+      'path' => drupal_get_path('module', 'wisski_texttei') . '/tinymce_plugin.js',
+      'extensions' => array(
+        'wisskiTextTEIConvert' => t('Wisski TEI Support'),
+      ),
+      'options' => array(
+        'wisski_texttei_url' => $base_root . $base_path . 'wisski/texttei/convert',
+      ),
+      'load' => TRUE,
+    ),
+    'wisskiTextTEIButtons' => array(
+      'path' => drupal_get_path('module', 'wisski_texttei') . '/tinymce_plugin.js',
+      'buttons' => array(
+        'wisskiTextTEIButtonFootnote' => t('Wisski TEI Footnote'),
+      ),
+      'load' => TRUE,
+    ),
+  );
+
+  return $plugins;
+}
+
+
+
+function wisski_texttei_ajax_convert() {
   
-  if (!$text || trim($text) == '') return '';
+  $q = (object) array('text' => NULL, 'to' => NULL);
+  wisski_parse_http_params($q, 'convert');
+
+  if ($q->text === NULL || $q->to === NULL) {
+    $ok = FALSE;
+    $text = "arguments not specified";
+  } elseif ($q->to == 'html') {
+    list($ok, $text) = wisski_texttei_convert_tei_to_html($q->text, TRUE, FALSE, FALSE, FALSE);
+  } elseif ($q->to == 'tei') {
+    list($ok, $text) = wisski_texttei_convert_html_to_tei($q->text);
+  } else {
+    $ok = FALSE;
+    $text = "bad target format";
+  }
+
+  if ($ok) {
+    print json_encode(array('text' => $text));
+    return;
+  } else {
+    drupal_set_header('HTTP/1.1 400 Bad Request');
+    print json_encode(array("error" => $text));
+    return;    
+  }
+
+}
+
+
+function wisski_texttei_convert_tei_to_html($text, $include_instance_group = FALSE, $include_rdfa = FALSE, $annos_as_links = FALSE, $include_tei_class = TRUE) {
+  
+  if (!$text || trim($text) == '') return array(TRUE, '');
 
   $doc = new DOMDocument();
   if (!@$doc->loadXML($text)) {
@@ -36,16 +118,17 @@ function wisski_texttei_convert_tei_to_html($text, $include_instance_group = FAL
   }
   
   if ($doc === NULL) {
-    watchdog('WissKI Text', 'TEI filter could not be applied. Text is no XML/HTML.');
-    return $text;
+    return array(FALSE, 'TEI filter could not be applied. Text is no XML/HTML.');
   }
   
-  $old_top = $doc->removeChild($doc->documentElement);
-  $top_p = $doc->createElement('div');
-  $top_p->setAttribute("class", "tei_text");
-  $top_p->appendChild($old_top);
-  $doc->appendChild($top_p);
-  
+  if ($include_tei_class) {
+    $old_top = $doc->removeChild($doc->documentElement);
+    $top_p = $doc->createElement('div');
+    $top_p->setAttribute("class", "tei_text");
+    $top_p->appendChild($old_top);
+    $doc->appendChild($top_p);
+  }
+
   // track which nodes are new, so that we don't convert nodes twice.
   $new_nodes = array();
   
@@ -133,7 +216,7 @@ function wisski_texttei_convert_tei_to_html($text, $include_instance_group = FAL
     
     $doc->documentElement->appendChild($note);
   }
-  
+
   $text = $doc->saveXML();
   
   // workaround: delete xml declaration. there should be an option to not serialize it...
@@ -141,7 +224,7 @@ function wisski_texttei_convert_tei_to_html($text, $include_instance_group = FAL
     $text = mb_substr($text, mb_strpos($text, '?' . '>', $a) + 2);
   }
   
-  return $text;
+  return array(TRUE, $text);
 
 }
 
@@ -149,7 +232,9 @@ function wisski_texttei_convert_tei_to_html($text, $include_instance_group = FAL
 
 function wisski_texttei_convert_html_to_tei($text) {
   
-  if (!$text || trim($text) == '') return '';
+  if (!$text || trim($text) == '') return array(TRUE, '');
+
+  $text = '<div>' . $text . '</div>';
   
   $doc = new DOMDocument();
   if (!@$doc->loadXML($text)) {
@@ -160,16 +245,8 @@ function wisski_texttei_convert_html_to_tei($text) {
   }
   
   if ($doc === NULL) {
-    watchdog('WissKI Text', 'HTML to TEI filter could not be applied. Text is no XML/HTML.');
-    return $text;
+    return array(FALSE, 'HTML to TEI filter could not be applied. Text is no XML.');
   }
-  
-  $old_top = $doc->removeChild($doc->documentElement);
-  $top_p = $doc->createElement('div');
-  $top_p->setAttribute("class", "tei_text");
-  $top_p->appendChild($old_top);
-  $doc->appendChild($top_p);
-  
   
   // convert links
   // changeing the DOM is forbidden while iterating over a nodelist
@@ -187,9 +264,10 @@ function wisski_texttei_convert_html_to_tei($text) {
       $uri = $link->getAttribute('about'); // rdfa: the easy case
     } else {
       // no rdfa, look if there is an annotation css class
-      $classes = preg_split('/\s+/', $link->getAttribute('class'), PREG_SPLIT_NO_EMPTY);
+      $classes = preg_split('/\s+/u', $link->getAttribute('class'), -1, PREG_SPLIT_NO_EMPTY);
       $uri = NULL;
       foreach ($classes as $c) {
+
         if (mb_strpos($c, 'wisski_anno_uri_') !== FALSE) {
           $uri = mb_substr($c, 16);
           break;
@@ -227,18 +305,21 @@ function wisski_texttei_convert_html_to_tei($text) {
   $nodes_nl = $doc->getElementsByTagName('sup');
   $node_array_sup = array();
   foreach ($nodes_nl as $l) {
-    // $id[1]: the footnote number
-    if (!preg_match('/^\s*[\s*(\d+)\s*]\s*$/u', $f->textContent, $id))
-      $node_array_sup[$id[1]] = $l;
+    // $id[2]: the footnote number
+    if (preg_match('/^\s*(\[\s*(\d+)\s*\]|(\d+))\s*$/u', $l->textContent, $id))
+      $node_array_sup[$id[2]] = $l;
   }
-  $nodes_nl = $doc->getElementsByTagName('div');
+  $xpath = new DOMXpath($doc);
+  $nodes_nl = $xpath->query('//*[@class]');
   $node_array_div = array();
-  foreach ($nodes_nl as $l) {
-    if ($l->hasAttribute('class')
-        && strpos($l->hasAttribute('class'), 'tei_tag_footnote') !== FALSE
-    // $id[1]: the footnote number
-       && preg_match('/^\s*[\s*(\d+)\s*]/u', $l->textContent, $id))
-      $node_array_div[$id[1]] = $l;
+  if ($nodes_nl) {
+    foreach ($nodes_nl as $l) {
+      if (strpos($l->getAttribute('class'), 'tei_footnote') !== FALSE
+      // $id[1]: the footnote number
+         && preg_match('/^\s*\[\s*(\d+)\s*\]/u', $l->textContent, $id)) {
+        $node_array_div[$id[1]] = $l;
+      }
+    }
   }
   foreach ($node_array_sup as $id => $sup) {
     
@@ -251,9 +332,12 @@ function wisski_texttei_convert_html_to_tei($text) {
     
     $note = $doc->createElement('note');
     $note->setAttribute('place', 'foot');
-    
     _wisski_texttei_replace_node($div, $note);
-    _wisski_texttei_replace_node($sup, $note);
+    if ($note->firstChild->nodeType == XML_TEXT_NODE || $note->firstChild->nodeType == XML_CDATA_SECTION_NODE) {
+      preg_match('/^\s*\[\s*\d+\s*\]\s*/u', $note->firstChild->textContent, $m);
+      $note->firstChild->deleteData(0, mb_strlen($m[0]));
+    }
+    $sup->parentNode->replaceChild($note, $sup);
   
   }
   
@@ -262,14 +346,21 @@ function wisski_texttei_convert_html_to_tei($text) {
     drupal_set_message(t("@id seems to be a footnote text but there is no footnote mark.", array('@id' => mb_substr($v->textContent, 15))), 'warning');
   }
   
-  $text = $doc->saveXML();
-  
-  // workaround: delete xml declaration. there should be an option to not serialize it...
-  if (($a = mb_strpos($text, '<?xml')) !== FALSE) {
-    $text = mb_substr($text, mb_strpos($text, '?' . '>', $a) + 2);
+  // if possible, discard the wrapping div tag
+  $div = $doc->documentElement->firstChild;
+  if (!$div->nextSibling) {
+    $doc->replaceChild($div, $doc->documentElement);
   }
   
-  return $text;
+  // serialize
+  $text = $doc->saveXML($doc->documentElement);
+  
+  // workaround: delete xml declaration. there should be an option to not serialize it...
+#  if (($a = mb_strpos($text, '<?xml')) !== FALSE) {
+#    $text = mb_substr($text, mb_strpos($text, '?' . '>', $a) + 2);
+#  }
+  
+  return array(TRUE, $text);
   
 }
 
