@@ -129,26 +129,27 @@
       ed.addCommand('wisskiTextTEIButtonFootnote', function() {
         var ed = tinymce.activeEditor;
         var n = ed.selection.getNode();
-        if (ed.dom.hasClass(n, 'tei_tag_footnote')) {
-          ed.dom.removeClass(n, 'tei_tag_footnote');
+        if (ed.dom.hasClass(n, 'tei_footnote')) {
+          ed.dom.removeClass(n, 'tei_footnote');
         } else {
-          var p = ed.dom.getParent(p, function(n) { ed.dom.hasClass(n, 'tei_tag_footnote'); });
+          var p = ed.dom.getParent(p, function(n) { ed.dom.hasClass(n, 'tei_footnote'); });
           if (p) {
-            ed.dom.removeClass(p, 'tei_tag_footnote');
+            ed.dom.removeClass(p, 'tei_footnote');
           } else {
-            ed.dom.addClass(n, 'tei_tag_footnote');
+            ed.dom.addClass(n, 'tei_footnote');
           }
         }
       });
 
       ed.addButton('wisskiTextTEIButtonFootnote', {
-        title : 'FN',
+        title : 'Footnote',
+        label : 'FN',
         cmd : 'wisskiTextTEIButtonFootnote',
       });
 
       // Add a node change handler, selects the button in the UI when a image is selected
       ed.onNodeChange.add(function(ed, cm, n) {
-        cm.setActive('wisskiTextTEIButtonFootnote', ed.dom.hasClass(n, 'tei_tag_footnote'));
+        cm.setActive('wisskiTextTEIButtonFootnote', ed.dom.hasClass(n, 'tei_footnote'));
       });
 
     }

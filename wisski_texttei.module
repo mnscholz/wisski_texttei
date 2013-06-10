@@ -395,5 +395,54 @@ function _wisski_texttei_replace_node($old, $new = NULL) {
 }
 
 
+function wisski_texttei_wisski_texttrip_extractor($op, $delta = 0, $settings = NULL, $tid = NULL, $text = '', $text_inst = '') {
+  
+  switch($op) {
+    case 'list':
+      
+      return array(0 => t('TEI triplifier'));
+
+    case 'settings':
+      
+      return array(); //_wisski_texttei_triplify_admin($settings);
+    
+    case 'submit':
+      
+      return NULL; //_wisski_texttei_triplify_admin_submit($settings);  // $settings ^= $form_state['values']['specific']!
+      
+    case 'triplify':
+
+      $sheet = new DOMDocument();
+      $sheet->load(dirname(__FILE__) . '/triplify.xsl');
+      $xsltproc = new XSLTProcessor();
+      $xsltproc->importStyleSheet($sheet);
+      $xsltproc->setParameter('', 'referringInstance', "<$text_inst>");
+      global $base_root, $base_path;
+      $xsltproc->setParameter('', 'instanceURIPrefix', 'wisskiown:');
+      
+      $tei = new DOMDocument();
+      if (!$tei->loadXML('<div>' . $text . '</div>')) {
+        drupal_set_message('Could not parse TEI document', 'error');
+        return array('triples' => array());
+      }
+      $turtle = $xsltproc->transformToXML($tei);
+      $turtle = '@prefix wisskiown: <' . $base_root . $base_path . "content/> .\n\n" . $turtle;
+      foreach (wisski_store_getObj()->wisski_ARCAdapter_getNamespaces() as $p => $n) {
+        $turtle = "@prefix $p: <$n> .\n" . $turtle;
+      }
+      dpm(array($turtle));
+
+      $parser = ARC2::getTurtleParser();
+      $parser->parse($base_root . $base_path, $turtle);
+      $triples = $parser->getTriples();
+      foreach ($parser->getErrors() as $e) drupal_set_message(check_plain($e), 'error');
+
+      return array('triples' => empty($triples) ? array() : $triples);
+
+  }
+
+}
+
+
 
 
