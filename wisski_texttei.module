@@ -430,7 +430,6 @@ function wisski_texttei_wisski_texttrip_extractor($op, $delta = 0, $settings = N
       foreach (wisski_store_getObj()->wisski_ARCAdapter_getNamespaces() as $p => $n) {
         $turtle = "@prefix $p: <$n> .\n" . $turtle;
       }
-      dpm(array($turtle));
 
       $parser = ARC2::getTurtleParser();
       $parser->parse($base_root . $base_path, $turtle);
