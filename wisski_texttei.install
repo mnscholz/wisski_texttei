@@ -1,0 +1,23 @@
+<?php
+
+function wisski_texttei_install() {
+
+  if (!db_result(db_query("SELECT format FROM {filter_formats} WHERE name = 'WissKI TEI'"))) {
+
+    // install an input format and add TEI filter
+    $format = new StdClass();
+    $format->name = 'WissKI TEI';
+    $format->roles = ',2,';
+    $format->cache = 1;
+    drupal_write_record('filter_formats', $format);
+
+    $filter = new StdClass();
+    $filter->format = $format->format;
+    $filter->module = 'wisski_texttei';
+    $filter->delta = 0;
+    $filter->weight = 0;
+    drupal_write_record('filters', $filter);
+
+  }
+
+}
